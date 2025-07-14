@@ -211,6 +211,9 @@ def generate_pdf(content: dict, template_id: str) -> BytesIO:
     except Exception as e:
         logger.error(f"PDF generation error: {str(e)}")
         raise
+@app.get("/")
+def home():
+    return JSONResponse(content={"message": "FastAPI on Vercel"})
 
 # Endpoint to extract text from files
 @app.post("/extract-text")
