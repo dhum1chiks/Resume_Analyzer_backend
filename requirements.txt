@@ -4,3 +4,4 @@ mangum
 pdfminer.six
 python-docx
 reportlab
+groq
