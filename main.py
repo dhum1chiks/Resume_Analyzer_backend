@@ -351,15 +351,14 @@ async def analyze(input_data: AnalysisInput):
             "created_at": datetime.utcnow().isoformat()
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.error:
-            logger.error(f"Supabase insert error: {response.error.message}")
+        if response.get('error'):
+            logger.error(f"Supabase insert error: {response['error'].message}")
             raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-
 # Endpoint to retrieve past tailoring attempts
 @app.get("/history/{user_id}")
 async def get_history(user_id: str):
