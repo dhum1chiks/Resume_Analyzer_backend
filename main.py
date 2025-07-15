@@ -65,31 +65,53 @@ if not GROQ_API_KEY:
     exit(1)
 client = Groq(api_key=GROQ_API_KEY)
 
-# Initialize Supabase table with schema check
+# Initialize Supabase table
 def init_db():
     try:
-        response = supabase.table('tailoring_attempts').select('id').execute()
-        logger.debug("Table 'tailoring_attempts' exists, checking schema")
-        # Check if target_role exists
-        schema_check = supabase.rpc('check_column_exists', {'table_name': 'tailoring_attempts', 'column_name': 'target_role'}).execute()
-        if not schema_check.data or schema_check.data[0].get('exists', False) is False:
+        # Check if the table exists by attempting to select from it
+        response = supabase.table('tailoring_attempts').select('id').limit(1).execute()
+        logger.debug("Table 'tailoring_attempts' exists")
+        
+        # Check if target_role column exists by querying schema
+        schema_response = supabase.from_('information_schema.columns')\
+            .select('column_name')\
+            .eq('table_name', 'tailoring_attempts')\
+            .eq('column_name', 'target_role')\
+            .execute()
+        
+        if not schema_response.data:
             logger.info("Adding target_role column to tailoring_attempts")
-            supabase.rpc('add_column_if_not_exists', {'table_name': 'tailoring_attempts', 'column_name': 'target_role', 'column_type': 'text'}).execute()
+            # Add target_role column via SQL execution
+            supabase.rpc('execute_sql', {
+                'query': '''
+                    ALTER TABLE tailoring_attempts
+                    ADD COLUMN IF NOT EXISTS target_role text
+                '''
+            }).execute()
     except Exception as e:
-        logger.error(f"Initializing Supabase table failed: {str(e)}")
-        # Create table only if it doesn't exist
-        supabase.table('tailoring_attempts').create({
-            "id": "uuid",
-            "user_id": "text",
-            "resume": "text",
-            "job_description": "text",
-            "analysis_result": "jsonb",
-            "cover_letter": "text",
-            "template_id": "text",
-            "tone": "text",
-            "target_role": "text",
-            "created_at": "timestamp"
-        }).execute()
+        logger.warning(f"Table 'tailoring_attempts' does not exist or other error: {str(e)}")
+        # Create table if it doesn't exist
+        try:
+            supabase.rpc('execute_sql', {
+                'query': '''
+                    CREATE TABLE IF NOT EXISTS tailoring_attempts (
+                        id UUID PRIMARY KEY,
+                        user_id TEXT,
+                        resume TEXT,
+                        job_description TEXT,
+                        analysis_result JSONB,
+                        cover_letter TEXT,
+                        template_id TEXT,
+                        tone TEXT,
+                        target_role TEXT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                '''
+            }).execute()
+            logger.info("Table 'tailoring_attempts' created successfully")
+        except Exception as create_err:
+            logger.error(f"Failed to create table: {str(create_err)}")
+            raise
 
 init_db()
 
@@ -359,13 +381,9 @@ async def analyze(input_data: AnalysisInput):
             "created_at": datetime.utcnow().isoformat() + "Z"
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if hasattr(response, 'error') and response.error:
-            error_msg = getattr(response.error, 'message', str(response.error))
-            logger.error(f"Supabase insert error: {error_msg}")
-            if "schema cache" in error_msg.lower():
-                logger.warning("Schema mismatch detected, skipping insert")
-            else:
-                raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
+        if response.data is None:
+            logger.error(f"Supabase insert failed: {response}")
+            raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except HTTPException as http_err:
@@ -380,10 +398,10 @@ async def get_history(user_id: str):
     try:
         response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
         logger.debug(f"Supabase response: {response}")
-        if hasattr(response, 'error') and response.error:
-            error_msg = getattr(response.error, 'message', str(response.error))
-            logger.error(f"Supabase select error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {error_msg}")
+        
+        if response.data is None:
+            logger.error("Supabase select returned None")
+            raise HTTPException(status_code=500, detail="Failed to retrieve history: Invalid response")
         
         attempts = [
             {
@@ -396,7 +414,7 @@ async def get_history(user_id: str):
                 "template_id": row["template_id"],
                 "tone": row["tone"],
                 "target_role": row.get("target_role", "Unknown Role")
-            } for row in response.data or []
+            } for row in response.data
         ]
         return {"attempts": attempts}
     except Exception as e:
