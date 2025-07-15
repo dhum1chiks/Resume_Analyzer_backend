@@ -41,7 +41,9 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:3001",
         "https://resume-analyzer-frontend-m03wwwh7e-manis-projects-f441ec6f.vercel.app",
-        "https://resume-analyzer-frontend-ten.vercel.app"
+        "https://resume-analyzer-frontend-ten.vercel.app",
+        "https://resume-analyzer-backend-nine.vercel.app",
+        "https://resume-analyzer-backend-7i5awzgfw-manis-projects-f441ec6f.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -72,7 +74,7 @@ def init_db():
         response = supabase.table('tailoring_attempts').select('id').limit(1).execute()
         logger.debug("Table 'tailoring_attempts' exists")
         
-        # Check if target_role column exists by querying schema
+        # Check if target_role column exists
         schema_response = supabase.from_('information_schema.columns')\
             .select('column_name')\
             .eq('table_name', 'tailoring_attempts')\
@@ -80,40 +82,40 @@ def init_db():
             .execute()
         
         if not schema_response.data:
-            logger.info("Adding target_role column to tailoring_attempts")
-            # Add target_role column via SQL execution
-            supabase.rpc('execute_sql', {
-                'query': '''
-                    ALTER TABLE tailoring_attempts
-                    ADD COLUMN IF NOT EXISTS target_role text
-                '''
-            }).execute()
+            logger.warning("target_role column missing. Please add it manually with:")
+            logger.warning("""
+                ALTER TABLE tailoring_attempts
+                ADD COLUMN IF NOT EXISTS target_role TEXT
+            """)
     except Exception as e:
-        logger.warning(f"Table 'tailoring_attempts' does not exist or other error: {str(e)}")
-        # Create table if it doesn't exist
-        try:
-            supabase.rpc('execute_sql', {
-                'query': '''
-                    CREATE TABLE IF NOT EXISTS tailoring_attempts (
-                        id UUID PRIMARY KEY,
-                        user_id TEXT,
-                        resume TEXT,
-                        job_description TEXT,
-                        analysis_result JSONB,
-                        cover_letter TEXT,
-                        template_id TEXT,
-                        tone TEXT,
-                        target_role TEXT,
-                        created_at TIMESTAMP DEFAULT NOW()
-                    )
-                '''
-            }).execute()
-            logger.info("Table 'tailoring_attempts' created successfully")
-        except Exception as create_err:
-            logger.error(f"Failed to create table: {str(create_err)}")
-            raise
+        logger.error(f"Table check failed: {str(e)}")
+        logger.warning("Please create the 'tailoring_attempts' table manually with the following SQL:")
+        logger.warning("""
+            CREATE TABLE tailoring_attempts (
+                id UUID PRIMARY KEY,
+                user_id TEXT,
+                resume TEXT,
+                job_description TEXT,
+                analysis_result JSONB,
+                cover_letter TEXT,
+                template_id TEXT,
+                tone TEXT,
+                target_role TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        logger.warning("Run this in the Supabase SQL Editor and redeploy the application.")
 
 init_db()
+
+# Serve favicon to prevent 404 errors
+@app.get("/favicon.ico")
+async def favicon():
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+@app.get("/favicon.png")
+async def favicon_png():
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 # Helper function to clean potential JSON response
 def clean_json_response(raw_response: str) -> str:
@@ -380,10 +382,14 @@ async def analyze(input_data: AnalysisInput):
             "target_role": input_data.target_role,
             "created_at": datetime.utcnow().isoformat() + "Z"
         }
-        response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.data is None:
-            logger.error(f"Supabase insert failed: {response}")
-            raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
+        try:
+            response = supabase.table('tailoring_attempts').insert(data).execute()
+            if response.data is None:
+                logger.error(f"Supabase insert failed: {response}")
+                raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
+        except Exception as e:
+            logger.error(f"Supabase insert error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {str(e)}")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except HTTPException as http_err:
