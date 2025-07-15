@@ -213,7 +213,7 @@ def generate_pdf(content: dict, template_id: str) -> BytesIO:
         raise
 @app.get("/home")
 def home():
-    return JSONResponse(content={"message": "FastAPI on Vercel"})
+    return {"message": "FastAPI on Vercel"}
 
 # Endpoint to extract text from files
 @app.post("/extract-text")
