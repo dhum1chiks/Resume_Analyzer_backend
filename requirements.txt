@@ -12,3 +12,5 @@ requests
 python-multipart
 typing-extensions
 jinja2
+httpx
+requests
