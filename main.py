@@ -348,8 +348,8 @@ async def analyze(input_data: AnalysisInput):
             "tone": input_data.tone,
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.error or (response.get('error') and response.get('error').get('message')):
-            error_msg = response.error.message if response.error else response['error']['message']
+        if response.error:
+            error_msg = response.error.message if response.error and hasattr(response.error, 'message') else str(response.error)
             logger.error(f"Supabase insert error: {error_msg}")
             raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
         
@@ -365,8 +365,8 @@ async def analyze(input_data: AnalysisInput):
 async def get_history(user_id: str):
     try:
         response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
-        if response.error or (response.get('error') and response.get('error').get('message')):
-            error_msg = response.error.message if response.error else response['error']['message']
+        if response.error:
+            error_msg = response.error.message if response.error and hasattr(response.error, 'message') else str(response.error)
             logger.error(f"Supabase select error: {error_msg}")
             raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {error_msg}")
         
