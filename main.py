@@ -78,6 +78,7 @@ def init_db():
             "cover_letter": "text",
             "template_id": "text",
             "tone": "text",
+            "target_role": "text",
             "created_at": "timestamp"
         }).execute()
 
@@ -180,8 +181,7 @@ def generate_pdf(content: dict, template_id: str) -> BytesIO:
         
         c.setFillColor(template["color"])
         
-        # Validate text length
-        MAX_TEXT_LENGTH = 100000  # Arbitrary limit to prevent buffer overflow
+        MAX_TEXT_LENGTH = 100000
         resume_text = content.get("resume", "")
         if len(resume_text) > MAX_TEXT_LENGTH:
             logger.error("Resume text exceeds maximum length")
@@ -299,7 +299,7 @@ async def analyze(input_data: AnalysisInput):
     
     if input_data.generate_cover_letter:
         prompt += f"""
-        6. Generate a personalized cover letter based on the resume and job description in a {input_data.tone} tone (formal, friendly, technical, or casual). Ensure the tone is consistent and the content feels human-written. Include the cover letter as plain text under the "cover_letter" key.
+        6. Generate a personalized cover letter based on the resume and job description in a {input_data.tone} tone (formal, friendly, technical, or casual). Ensure the tone is consistent and the content feels human-written. Include the cover_letter as plain text under the "cover_letter" key.
         """
     
     if input_data.generate_interview_questions:
@@ -346,10 +346,12 @@ async def analyze(input_data: AnalysisInput):
             "cover_letter": analysis.get("cover_letter", ""),
             "template_id": input_data.template_id,
             "tone": input_data.tone,
+            "target_role": input_data.target_role,
+            "created_at": datetime.utcnow().isoformat() + "Z"
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.error:
-            error_msg = response.error.message if response.error and hasattr(response.error, 'message') else str(response.error)
+        if hasattr(response, 'error') and response.error:
+            error_msg = getattr(response.error, 'message', str(response.error))
             logger.error(f"Supabase insert error: {error_msg}")
             raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
         
@@ -365,8 +367,9 @@ async def analyze(input_data: AnalysisInput):
 async def get_history(user_id: str):
     try:
         response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
-        if response.error:
-            error_msg = response.error.message if response.error and hasattr(response.error, 'message') else str(response.error)
+        logger.debug(f"Supabase response: {response}")
+        if hasattr(response, 'error') and response.error:
+            error_msg = getattr(response.error, 'message', str(response.error))
             logger.error(f"Supabase select error: {error_msg}")
             raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {error_msg}")
         
@@ -379,7 +382,8 @@ async def get_history(user_id: str):
                 "analysis_result": row["analysis_result"],
                 "cover_letter": row["cover_letter"],
                 "template_id": row["template_id"],
-                "tone": row["tone"]
+                "tone": row["tone"],
+                "target_role": row.get("target_role", "Unknown Role")
             } for row in response.data or []
         ]
         return {"attempts": attempts}
@@ -393,7 +397,6 @@ async def export_pdf(input_data: AnalysisInput):
     try:
         logger.debug(f"Received PDF export request: template_id={input_data.template_id}, generate_cover_letter={input_data.generate_cover_letter}, resume_length={len(input_data.resume)}, job_desc_length={len(input_data.job_description)}")
         
-        # Validate inputs
         if not input_data.resume:
             logger.error("Resume is empty")
             raise HTTPException(status_code=400, detail="Resume text is required")
