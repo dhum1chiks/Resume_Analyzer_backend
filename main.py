@@ -282,7 +282,6 @@ class AnalysisInput(BaseModel):
 async def analyze(input_data: AnalysisInput):
     prompt = f"""
     Analyze the provided resume and job description with a human-like, natural tone, avoiding any indication of AI-generated content. Perform the following tasks:
-
     1. Extract key skills and requirements from the job description.
     2. Compare the extracted skills with those in the resume, calculate a match percentage (0-100), and identify specific skills from the job description that are missing in the resume.
     3. Provide specific, actionable suggestions to improve the resume based on the job description, focusing on addressing missing skills or enhancing relevance.
@@ -343,16 +342,16 @@ async def analyze(input_data: AnalysisInput):
             "user_id": input_data.user_id or "anonymous",
             "resume": input_data.resume,
             "job_description": input_data.job_description,
-            "analysis_result": analysis,  # Pass dict directly for jsonb conversion
+            "analysis_result": analysis,
             "cover_letter": analysis.get("cover_letter", ""),
             "template_id": input_data.template_id,
             "tone": input_data.tone,
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.error or (response.get('error') and response['error'].message):
-            error_msg = response.error.message if response.error else response['error'].message
+        if response.error or (response.get('error') and response.get('error').get('message')):
+            error_msg = response.error.message if response.error else response['error']['message']
             logger.error(f"Supabase insert error: {error_msg}")
-            raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
+            raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except HTTPException as http_err:
@@ -366,10 +365,10 @@ async def analyze(input_data: AnalysisInput):
 async def get_history(user_id: str):
     try:
         response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
-        if response.error or (response.get('error') and response['error'].message):
-            error_msg = response.error.message if response.error else response['error'].message
+        if response.error or (response.get('error') and response.get('error').get('message')):
+            error_msg = response.error.message if response.error else response['error']['message']
             logger.error(f"Supabase select error: {error_msg}")
-            raise HTTPException(status_code=500, detail="Failed to retrieve history")
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {error_msg}")
         
         attempts = [
             {
@@ -377,15 +376,15 @@ async def get_history(user_id: str):
                 "created_at": row["created_at"],
                 "resume": row["resume"],
                 "job_description": row["job_description"],
-                "analysis_result": row["analysis_result"],  # Already a dict from jsonb
+                "analysis_result": row["analysis_result"],
                 "cover_letter": row["cover_letter"],
                 "template_id": row["template_id"],
                 "tone": row["tone"]
-            } for row in response.data
+            } for row in response.data or []
         ]
         return {"attempts": attempts}
     except Exception as e:
-        logger.error(f"History retrieval error: {str(e)}")
+        logger.error(f"History retrieval error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"History retrieval failed: {str(e)}")
 
 # Endpoint to export resume and cover letter as PDF
