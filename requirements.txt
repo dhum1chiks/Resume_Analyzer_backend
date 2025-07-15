@@ -12,3 +12,7 @@ requests==2.32.3
 python-multipart==0.0.9
 typing-extensions==4.11.0
 jinja2==3.1.4
+spacy==3.7.4                    # NLP for resume parsing
+scikit-learn==1.5.0             # ML models (optional)
+pandas==2.2.2                   # Data manipulation
+numpy==1.26.4   
