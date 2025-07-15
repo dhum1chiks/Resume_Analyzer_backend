@@ -53,22 +53,31 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     logger.error("SUPABASE_URL or SUPABASE_KEY environment variable not set")
-    raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
+    print("Error: SUPABASE_URL and SUPABASE_KEY environment variables are required. Check your .env file.")
+    exit(1)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Set Groq API key
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if not GROQ_API_KEY:
     logger.error("GROQ_API_KEY environment variable not set")
-    raise ValueError("GROQ_API_KEY environment variable is required")
+    print("Error: GROQ_API_KEY environment variable is required. Check your .env file.")
+    exit(1)
 client = Groq(api_key=GROQ_API_KEY)
 
-# Initialize Supabase table
+# Initialize Supabase table with schema check
 def init_db():
     try:
-        response = supabase.table('tailoring_attempts').select('*').execute()
+        response = supabase.table('tailoring_attempts').select('id').execute()
+        logger.debug("Table 'tailoring_attempts' exists, checking schema")
+        # Check if target_role exists
+        schema_check = supabase.rpc('check_column_exists', {'table_name': 'tailoring_attempts', 'column_name': 'target_role'}).execute()
+        if not schema_check.data or schema_check.data[0].get('exists', False) is False:
+            logger.info("Adding target_role column to tailoring_attempts")
+            supabase.rpc('add_column_if_not_exists', {'table_name': 'tailoring_attempts', 'column_name': 'target_role', 'column_type': 'text'}).execute()
     except Exception as e:
         logger.error(f"Initializing Supabase table failed: {str(e)}")
+        # Create table only if it doesn't exist
         supabase.table('tailoring_attempts').create({
             "id": "uuid",
             "user_id": "text",
@@ -176,8 +185,8 @@ def generate_pdf(content: dict, template_id: str) -> BytesIO:
             c.setFont(template["font"], template["size"])
             logger.debug(f"Font set to {template['font']} with size {template['size']}")
         except Exception as e:
-            logger.error(f"Font error: {str(e)}")
-            raise ValueError(f"Invalid font {template['font']}: {str(e)}")
+            logger.error(f"Font error: {str(e)}, falling back to Helvetica")
+            c.setFont("Helvetica", template["size"])
         
         c.setFillColor(template["color"])
         
@@ -267,10 +276,10 @@ class AnalysisInput(BaseModel):
 
     @classmethod
     def validate(cls, v):
-        if len(v["resume"]) > 10000:
-            raise ValueError("Resume text exceeds 10,000 characters")
-        if len(v["job_description"]) > 10000:
-            raise ValueError("Job description text exceeds 10,000 characters")
+        if len(v["resume"]) > 20000:
+            raise ValueError("Resume text exceeds 20,000 characters")
+        if len(v["job_description"]) > 20000:
+            raise ValueError("Job description text exceeds 20,000 characters")
         if v.get("tone") and v["tone"] not in ["formal", "friendly", "technical", "casual"]:
             raise ValueError("Tone must be 'formal', 'friendly', 'technical', or 'casual'")
         if v.get("template_id") and v["template_id"] not in ["modern", "classic", "professional"]:
@@ -353,7 +362,10 @@ async def analyze(input_data: AnalysisInput):
         if hasattr(response, 'error') and response.error:
             error_msg = getattr(response.error, 'message', str(response.error))
             logger.error(f"Supabase insert error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
+            if "schema cache" in error_msg.lower():
+                logger.warning("Schema mismatch detected, skipping insert")
+            else:
+                raise HTTPException(status_code=500, detail=f"Failed to save tailoring attempt: {error_msg}")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except HTTPException as http_err:
