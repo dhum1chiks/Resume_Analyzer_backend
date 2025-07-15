@@ -36,11 +36,18 @@ logger = logging.getLogger(__name__)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:3001","https://resume-analyzer-frontend-m03wwwh7e-manis-projects-f441ec6f.vercel.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:3001",
+        "https://resume-analyzer-frontend-m03wwwh7e-manis-projects-f441ec6f.vercel.app",
+        "https://resume-analyzer-frontend-ten.vercel.app"  # ✅ Add this line
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Set Groq API key
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
