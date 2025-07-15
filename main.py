@@ -1,5 +1,4 @@
 import os
-import sqlite3
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -71,15 +70,15 @@ def init_db():
     except Exception as e:
         logger.error(f"Initializing Supabase table failed: {str(e)}")
         supabase.table('tailoring_attempts').create({
-            "id": "TEXT",
-            "user_id": "TEXT",
-            "resume": "TEXT",
-            "job_description": "TEXT",
-            "analysis_result": "TEXT",
-            "cover_letter": "TEXT",
-            "template_id": "TEXT",
-            "tone": "TEXT",
-            "created_at": "TIMESTAMP"
+            "id": "uuid",
+            "user_id": "text",
+            "resume": "text",
+            "job_description": "text",
+            "analysis_result": "jsonb",
+            "cover_letter": "text",
+            "template_id": "text",
+            "tone": "text",
+            "created_at": "timestamp"
         }).execute()
 
 init_db()
@@ -344,28 +343,32 @@ async def analyze(input_data: AnalysisInput):
             "user_id": input_data.user_id or "anonymous",
             "resume": input_data.resume,
             "job_description": input_data.job_description,
-            "analysis_result": json.dumps(analysis),
+            "analysis_result": analysis,  # Pass dict directly for jsonb conversion
             "cover_letter": analysis.get("cover_letter", ""),
             "template_id": input_data.template_id,
             "tone": input_data.tone,
-            "created_at": datetime.utcnow().isoformat()
         }
         response = supabase.table('tailoring_attempts').insert(data).execute()
-        if response.get('error'):
-            logger.error(f"Supabase insert error: {response['error'].message}")
+        if response.error or (response.get('error') and response['error'].message):
+            error_msg = response.error.message if response.error else response['error'].message
+            logger.error(f"Supabase insert error: {error_msg}")
             raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
+    except HTTPException as http_err:
+        raise http_err
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        logger.error(f"Unexpected error in analyze endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
 # Endpoint to retrieve past tailoring attempts
 @app.get("/history/{user_id}")
 async def get_history(user_id: str):
     try:
         response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
-        if response.error:
-            logger.error(f"Supabase select error: {response.error.message}")
+        if response.error or (response.get('error') and response['error'].message):
+            error_msg = response.error.message if response.error else response['error'].message
+            logger.error(f"Supabase select error: {error_msg}")
             raise HTTPException(status_code=500, detail="Failed to retrieve history")
         
         attempts = [
@@ -374,7 +377,7 @@ async def get_history(user_id: str):
                 "created_at": row["created_at"],
                 "resume": row["resume"],
                 "job_description": row["job_description"],
-                "analysis_result": json.loads(row["analysis_result"]),
+                "analysis_result": row["analysis_result"],  # Already a dict from jsonb
                 "cover_letter": row["cover_letter"],
                 "template_id": row["template_id"],
                 "tone": row["tone"]
