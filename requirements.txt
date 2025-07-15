@@ -5,3 +5,4 @@ pdfminer.six
 python-docx
 reportlab
 groq
+python-dotenv
