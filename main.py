@@ -19,6 +19,7 @@ from typing import Optional, List
 import uuid
 import re
 import time
+from supabase import create_client, Client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -41,13 +42,20 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:3001",
         "https://resume-analyzer-frontend-m03wwwh7e-manis-projects-f441ec6f.vercel.app",
-        "https://resume-analyzer-frontend-ten.vercel.app"  # ✅ Add this line
+        "https://resume-analyzer-frontend-ten.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Set Supabase credentials
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    logger.error("SUPABASE_URL or SUPABASE_KEY environment variable not set")
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Set Groq API key
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -56,25 +64,23 @@ if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is required")
 client = Groq(api_key=GROQ_API_KEY)
 
-# Initialize SQLite database
+# Initialize Supabase table
 def init_db():
-    conn = sqlite3.connect('tailoring_history.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS tailoring_attempts (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            resume TEXT,
-            job_description TEXT,
-            analysis_result TEXT,
-            cover_letter TEXT,
-            template_id TEXT,
-            tone TEXT,
-            created_at TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        response = supabase.table('tailoring_attempts').select('*').execute()
+    except Exception as e:
+        logger.error(f"Initializing Supabase table failed: {str(e)}")
+        supabase.table('tailoring_attempts').create({
+            "id": "TEXT",
+            "user_id": "TEXT",
+            "resume": "TEXT",
+            "job_description": "TEXT",
+            "analysis_result": "TEXT",
+            "cover_letter": "TEXT",
+            "template_id": "TEXT",
+            "tone": "TEXT",
+            "created_at": "TIMESTAMP"
+        }).execute()
 
 init_db()
 
@@ -218,6 +224,7 @@ def generate_pdf(content: dict, template_id: str) -> BytesIO:
     except Exception as e:
         logger.error(f"PDF generation error: {str(e)}")
         raise
+
 @app.get("/home")
 def home():
     return {"message": "FastAPI on Vercel"}
@@ -332,26 +339,21 @@ async def analyze(input_data: AnalysisInput):
             raise HTTPException(status_code=500, detail=analysis["error"])
         
         attempt_id = str(uuid.uuid4())
-        conn = sqlite3.connect('tailoring_history.db')
-        c = conn.cursor()
-        c.execute('''
-            INSERT INTO tailoring_attempts (
-                id, user_id, resume, job_description, analysis_result, 
-                cover_letter, template_id, tone, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            attempt_id,
-            input_data.user_id or "anonymous",
-            input_data.resume,
-            input_data.job_description,
-            json.dumps(analysis),
-            analysis.get("cover_letter", ""),
-            input_data.template_id,
-            input_data.tone,
-            datetime.utcnow()
-        ))
-        conn.commit()
-        conn.close()
+        data = {
+            "id": attempt_id,
+            "user_id": input_data.user_id or "anonymous",
+            "resume": input_data.resume,
+            "job_description": input_data.job_description,
+            "analysis_result": json.dumps(analysis),
+            "cover_letter": analysis.get("cover_letter", ""),
+            "template_id": input_data.template_id,
+            "tone": input_data.tone,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        response = supabase.table('tailoring_attempts').insert(data).execute()
+        if response.error:
+            logger.error(f"Supabase insert error: {response.error.message}")
+            raise HTTPException(status_code=500, detail="Failed to save tailoring attempt")
         
         return {"analysis": analysis, "attempt_id": attempt_id}
     except Exception as e:
@@ -362,22 +364,23 @@ async def analyze(input_data: AnalysisInput):
 @app.get("/history/{user_id}")
 async def get_history(user_id: str):
     try:
-        conn = sqlite3.connect('tailoring_history.db')
-        c = conn.cursor()
-        c.execute('SELECT id, created_at, resume, job_description, analysis_result, cover_letter, template_id, tone FROM tailoring_attempts WHERE user_id = ?', (user_id,))
+        response = supabase.table('tailoring_attempts').select('*').eq('user_id', user_id).execute()
+        if response.error:
+            logger.error(f"Supabase select error: {response.error.message}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve history")
+        
         attempts = [
             {
-                "id": row[0],
-                "created_at": row[1],
-                "resume": row[2],
-                "job_description": row[3],
-                "analysis_result": json.loads(row[4]),
-                "cover_letter": row[5],
-                "template_id": row[6],
-                "tone": row[7]
-            } for row in c.fetchall()
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "resume": row["resume"],
+                "job_description": row["job_description"],
+                "analysis_result": json.loads(row["analysis_result"]),
+                "cover_letter": row["cover_letter"],
+                "template_id": row["template_id"],
+                "tone": row["tone"]
+            } for row in response.data
         ]
-        conn.close()
         return {"attempts": attempts}
     except Exception as e:
         logger.error(f"History retrieval error: {str(e)}")
